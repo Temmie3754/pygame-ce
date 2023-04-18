@@ -1475,7 +1475,7 @@ static void
 draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                 int y2, int width, int *drawn_area)
 {
-    int dx, dy, err, e2, sx, sy, start_draw, end_draw, diff, exit, end;
+    int dx, dy, err, e2, sx, sy, start_draw, end_draw;
     int end_x = surf->clip_rect.x + surf->clip_rect.w - 1;
     int end_y = surf->clip_rect.y + surf->clip_rect.h - 1;
     int xinc = 0;
@@ -1511,29 +1511,13 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
     }
     // Bresenham's line algorithm
     dx = abs(x2 - x1);
-    dy = -abs(y2 - y1);
+    dy = abs(y2 - y1);
     sx = x2 > x1 ? 1 : -1;
     sy = y2 > y1 ? 1 : -1;
-    err = dx + dy;
+    err = (dx > dy ? dx : -dy) / 2;
     if (xinc) {
-        end = y2 + sy;
-        if (y2 > y1) {
-            exit = end_y + 1;
-            diff = surf->clip_rect.y - y1;
-        }
-        else {
-            exit = surf->clip_rect.y - 1;
-            diff = y1 - end_y;
-        }
-        if (diff > 0) {
-            y1 += diff * sy;
-            err += (diff)*dx;
-            x1 += ((err - dy) / -dy) * sx;
-            err = (err % -dy) + dy;
-        }
-
-        while (y1 != end) {
-            if (y1 != exit) {
+        while (y1 != (y2 + sy)) {
+            if (surf->clip_rect.y <= y1 && y1 <= end_y) {
                 start_draw =
                     MAX((x1 - width) + extra_width, surf->clip_rect.x);
                 end_draw = MIN(end_x, x1 + width);
@@ -1543,37 +1527,20 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                                            drawn_area);
                 }
             }
-            else
-                break;
-            e2 = err * 2;
-            if (e2 >= dy) {
-                err += dy;
+            e2 = err;
+            if (e2 > -dx) {
+                err -= dy;
                 x1 += sx;
             }
-            if (e2 <= dx) {
+            if (e2 < dy) {
                 err += dx;
                 y1 += sy;
             }
         }
     }
     else {
-        end = x2 + sx;
-        if (x2 > x1) {
-            diff = surf->clip_rect.x - x1;
-            exit = end_x + 1;
-        }
-        else {
-            diff = x1 - end_x;
-            exit = surf->clip_rect.x - 1;
-        }
-        if (diff > 0) {
-            x1 += diff * sx;
-            err += diff * dy;
-            y1 += ((err - dx) / -dx) * sy;
-            err = (err % dx) + dy;
-        }
-        while (x1 != end) {
-            if (x1 != exit) {
+        while (x1 != (x2 + sx)) {
+            if (surf->clip_rect.x <= x1 && x1 <= end_x) {
                 start_draw =
                     MAX((y1 - width) + extra_width, surf->clip_rect.y);
                 end_draw = MIN(end_y, y1 + width);
@@ -1583,14 +1550,12 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                                            drawn_area);
                 }
             }
-            else
-                break;
-            e2 = err * 2;
-            if (e2 >= dy) {
-                err += dy;
+            e2 = err;
+            if (e2 > -dx) {
+                err -= dy;
                 x1 += sx;
             }
-            if (e2 <= dx) {
+            if (e2 < dy) {
                 err += dx;
                 y1 += sy;
             }
@@ -2360,8 +2325,7 @@ draw_fillpoly(SDL_Surface *surf, int *point_x, int *point_y,
      * 3. each two x-coordinates in x_intersect are then inside the polygon
      *    (draw line for a pair of two such points)
      */
-    for (y = MAX(miny, surf->clip_rect.y);
-         (y <= MIN(maxy, surf->clip_rect.y + surf->clip_rect.h)); y++) {
+    for (y = miny; (y <= maxy); y++) {
         // n_intersections is the number of intersections with the polygon
         int n_intersections = 0;
         for (i = 0; (i < num_points); i++) {
