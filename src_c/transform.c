@@ -409,6 +409,37 @@ rotate(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, double sangle,
     }
 }
 
+static void
+perspective(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, double sangle,
+       double cangle)
+{
+    double x[4] = {corners[0].x, corners[1].x, corners[2].x, corners[3].x};
+    double y[4] = {corners[0].y, corners[1].y, corners[2].y, corners[3].y};
+
+    double a = (y[3] - y[2]) * (x[1] - x[2]) - (y[1] - y[2]) * (x[3] - x[2]);
+    double b = ((y[0] - y[2]) * (x[1] - x[2]) - (y[1] - y[2]) * (x[0] - x[2])) / a;
+    double c = ((y[3] - y[2]) * (x[0] - x[2]) - (y[0] - y[2]) * (x[3] - x[2])) / a;
+    double d = ((y[0] - y[2]) * (x[3] - x[2]) - (y[3] - y[2]) * (x[0] - x[2])) / a;
+    double e = ((x[1] - x[0]) * (y[3] - y[0]) - (y[1] - y[0]) * (x[3] - x[0])) / a;
+    double f = ((x[3] - x[0]) * (y[1] - y[0]) - (y[3] - y[0]) * (x[1] - x[0])) / a;
+
+    Uint32* src_pixels = (Uint32*) src->pixels;
+    Uint32* dest_pixels = (Uint32*) dst->pixels;
+
+    for (int y = 0; y < src->h; y++) {
+        for (int x = 0; x < src->w; x++) {
+            double u = (b * x + c * y + d) / (a * x + b * y + 1);
+            double v = (e * x + f * y + 1) / (a * x + b * y + 1);
+            int u_int = (int) (u * src->w);
+            int v_int = (int) (v * src->h);
+
+            if (u_int >= 0 && u_int < src->w && v_int >= 0 && v_int < src->h) {
+                dest_pixels[y * src->w + x] = src_pixels[v_int * src->w + u_int];
+            }
+        }
+    }
+}
+
 static SDL_Surface *
 scale_to(pgSurfaceObject *srcobj, pgSurfaceObject *dstobj, int width,
          int height)
@@ -640,6 +671,78 @@ surf_rotate(PyObject *self, PyObject *args, PyObject *kwargs)
                       fabs(-sx - cy)));
 
     newsurf = newsurf_fromsurf(surf, nxmax, nymax);
+    if (!newsurf)
+        return NULL;
+
+    /* get the background color */
+    if (SDL_GetColorKey(surf, &bgcolor) != 0) {
+        SDL_LockSurface(surf);
+        switch (surf->format->BytesPerPixel) {
+            case 1:
+                bgcolor = *(Uint8 *)surf->pixels;
+                break;
+            case 2:
+                bgcolor = *(Uint16 *)surf->pixels;
+                break;
+            case 4:
+                bgcolor = *(Uint32 *)surf->pixels;
+                break;
+            default: /*case 3:*/
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+                bgcolor = (((Uint8 *)surf->pixels)[0]) +
+                          (((Uint8 *)surf->pixels)[1] << 8) +
+                          (((Uint8 *)surf->pixels)[2] << 16);
+#else
+                bgcolor = (((Uint8 *)surf->pixels)[2]) +
+                          (((Uint8 *)surf->pixels)[1] << 8) +
+                          (((Uint8 *)surf->pixels)[0] << 16);
+#endif
+        }
+        SDL_UnlockSurface(surf);
+        bgcolor &= ~surf->format->Amask;
+    }
+
+    SDL_LockSurface(newsurf);
+    pgSurface_Lock(surfobj);
+
+    Py_BEGIN_ALLOW_THREADS;
+    rotate(surf, newsurf, bgcolor, sangle, cangle);
+    Py_END_ALLOW_THREADS;
+
+    pgSurface_Unlock(surfobj);
+    SDL_UnlockSurface(newsurf);
+
+    return (PyObject *)pgSurface_New(newsurf);
+}
+
+static PyObject *
+surf_perspective(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    pgSurfaceObject *surfobj;
+    SDL_Surface *surf, *newsurf;
+
+    int x1, x2, y1, y2;
+    double x, y, cx, cy, sx, sy;
+    int nxmax, nymax;
+    Uint32 bgcolor;
+    static char *keywords[] = {"surface", "angle", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!f", keywords,
+                                     &pgSurface_Type, &surfobj, &x1, &x2, &y1, &y2))
+        return NULL;
+    surf = pgSurface_AsSurface(surfobj);
+    SURF_INIT_CHECK(surf)
+
+    if (surf->w < 1 || surf->h < 1) {
+        Py_INCREF(surfobj);
+        return (PyObject *)surfobj;
+    }
+
+    if (surf->format->BytesPerPixel == 0 || surf->format->BytesPerPixel > 4)
+        return RAISE(PyExc_ValueError,
+                     "unsupported Surface bit depth for transform");
+
+
     if (!newsurf)
         return NULL;
 
