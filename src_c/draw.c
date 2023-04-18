@@ -1475,7 +1475,7 @@ static void
 draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                 int y2, int width, int *drawn_area)
 {
-    int dx, dy, err, e2, sx, sy, start_draw, end_draw;
+    int dx, dy, err, e2, sx, sy, start_draw, end_draw, diff, exit, end;
     int end_x = surf->clip_rect.x + surf->clip_rect.w - 1;
     int end_y = surf->clip_rect.y + surf->clip_rect.h - 1;
     int xinc = 0;
@@ -1511,13 +1511,44 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
     }
     // Bresenham's line algorithm
     dx = abs(x2 - x1);
-    dy = abs(y2 - y1);
+    dy = -abs(y2 - y1);
     sx = x2 > x1 ? 1 : -1;
     sy = y2 > y1 ? 1 : -1;
-    err = (dx > dy ? dx : -dy) / 2;
+    err = 0;
+    // If line is more vertical than horizontal
     if (xinc) {
-        while (y1 != (y2 + sy)) {
-            if (surf->clip_rect.y <= y1 && y1 <= end_y) {
+        end = y2 + sy;
+        // Set exit to y value of where line will leave surface
+        // Set diff to difference between starting y coordinate and the y value of the line's entry point to the surface
+        if (y2 > y1) {
+            exit = end_y + 1;
+            diff = surf->clip_rect.y - y1;
+        }
+        else {
+            exit = surf->clip_rect.y - 1;
+            diff = y1 - end_y;
+        }
+        // If line starts outside of surface
+        if (diff > 0) {
+            // Set y1 to entry y point
+            y1 += diff * sy;
+            // Adjust err by dx for the change in the y axis
+            err += diff * dx;
+            // Update x coordinate to what it should be for the entry y coordinate based on err value
+            // floors to ensure consistency between positive and negative coordinates
+            x1 += floor((float)err / (float)-dy * sx);
+            // Adjust err value to correct for change in x axis
+            err = dy - (err % dy) + dx;
+        }
+        if (err == 0) {
+            err = dx + dy;
+        }
+        printf("err: %d\n", err);
+        printf("x1: %d\n", x1);
+
+        // Continue through normal Bresenham's line algorithm iteration
+        while (y1 != end) {
+            if (y1 != exit) {
                 start_draw =
                     MAX((x1 - width) + extra_width, surf->clip_rect.x);
                 end_draw = MIN(end_x, x1 + width);
@@ -1525,22 +1556,52 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                     drawhorzline(surf, color, start_draw, y1, end_draw);
                     add_line_to_drawn_list(start_draw, y1, end_draw, y1,
                                            drawn_area);
+                    printf("endx: %d\n", x1);
+
                 }
             }
-            e2 = err;
-            if (e2 > -dx) {
-                err -= dy;
+            else
+                break;
+            e2 = err * 2;
+            if (e2 >= dy) {
+                err += dy;
                 x1 += sx;
             }
-            if (e2 < dy) {
+            if (e2 <= dx) {
                 err += dx;
                 y1 += sy;
             }
         }
+        printf("enderr: %d\n", err);
     }
     else {
-        while (x1 != (x2 + sx)) {
-            if (surf->clip_rect.x <= x1 && x1 <= end_x) {
+        end = x2 + sx;
+        // Set exit to x value of where line will leave surface
+        // Set diff to difference between starting x coordinate and the x value of the line's entry point to the surface
+        if (x2 > x1) {
+            diff = surf->clip_rect.x - x1;
+            exit = end_x + 1;
+        }
+        else {
+            diff = x1 - end_x;
+            exit = surf->clip_rect.x - 1;
+        }
+        // If line starts outside of surface
+        if (diff > 0) {
+            // Set x1 to entry x point
+            x1 += diff * sx;
+            // Adjust err by dy for the change in the x axis (note the negative value due to dy being set to be negative at the start)
+            err += diff * -dy;
+            y1 +=  ceil((float)err / (float)dx * sx) * sy;
+            err = dy + dx + (err % dx);
+        }
+        if (err == 0) {
+            err = dx + dy;
+        }
+        printf("err: %d\n", err);
+
+        while (x1 != end) {
+            if (x1 != exit) {
                 start_draw =
                     MAX((y1 - width) + extra_width, surf->clip_rect.y);
                 end_draw = MIN(end_y, y1 + width);
@@ -1550,16 +1611,20 @@ draw_line_width(SDL_Surface *surf, Uint32 color, int x1, int y1, int x2,
                                            drawn_area);
                 }
             }
-            e2 = err;
-            if (e2 > -dx) {
-                err -= dy;
+            else
+                break;
+            e2 = err * 2;
+            if (e2 >= dy) {
+                err += dy;
                 x1 += sx;
             }
-            if (e2 < dy) {
+            if (e2 <= dx) {
                 err += dx;
                 y1 += sy;
             }
         }
+        printf("errend: %d\n", err);
+
     }
 }
 
@@ -2325,7 +2390,8 @@ draw_fillpoly(SDL_Surface *surf, int *point_x, int *point_y,
      * 3. each two x-coordinates in x_intersect are then inside the polygon
      *    (draw line for a pair of two such points)
      */
-    for (y = miny; (y <= maxy); y++) {
+    for (y = MAX(miny, surf->clip_rect.y);
+         (y <= MIN(maxy, surf->clip_rect.y + surf->clip_rect.h)); y++) {
         // n_intersections is the number of intersections with the polygon
         int n_intersections = 0;
         for (i = 0; (i < num_points); i++) {
