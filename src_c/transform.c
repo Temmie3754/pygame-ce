@@ -409,35 +409,122 @@ rotate(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, double sangle,
     }
 }
 
-static void
-perspective(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, double sangle,
-       double cangle)
+void solveLinearSystem(double A[][8], double b[], double x[], int n)
 {
-    double x[4] = {corners[0].x, corners[1].x, corners[2].x, corners[3].x};
-    double y[4] = {corners[0].y, corners[1].y, corners[2].y, corners[3].y};
+    // Gauss-Jordan elimination with partial pivoting
+    for (int k = 0; k < n; k++) {
+        int p = k;
+        for (int i = k+1; i < n; i++) {
+            if (fabs(A[i][k]) > fabs(A[p][k])) {
+                p = i;
+            }
+        }
+        if (p != k) {
+            for (int j = 0; j < n; j++) {
+                double tmp = A[k][j];
+                A[k][j] = A[p][j];
+                A[p][j] = tmp;
+            }
+            double tmp = b[k];
+            b[k] = b[p];
+            b[p] = tmp;
+        }
+        for (int i = k+1; i < n; i++) {
+            double f = A[i][k] / A[k][k];
+            for (int j = k+1; j < n; j++) {
+                A[i][j] -= f * A[k][j];
+            }
+            b[i] -= f * b[k];
+        }
+    }
+    // Back-substitution
+    for (int k = n-1; k >= 0; k--) {
+        x[k] = b[k];
+        for (int j = k+1; j < n; j++) {
+            x[k] -= A[k][j] * x[j];
+        }
+        x[k] /= A[k][k];
+    }
+}
 
-    double a = (y[3] - y[2]) * (x[1] - x[2]) - (y[1] - y[2]) * (x[3] - x[2]);
-    double b = ((y[0] - y[2]) * (x[1] - x[2]) - (y[1] - y[2]) * (x[0] - x[2])) / a;
-    double c = ((y[3] - y[2]) * (x[0] - x[2]) - (y[0] - y[2]) * (x[3] - x[2])) / a;
-    double d = ((y[0] - y[2]) * (x[3] - x[2]) - (y[3] - y[2]) * (x[0] - x[2])) / a;
-    double e = ((x[1] - x[0]) * (y[3] - y[0]) - (y[1] - y[0]) * (x[3] - x[0])) / a;
-    double f = ((x[3] - x[0]) * (y[1] - y[0]) - (y[3] - y[0]) * (x[1] - x[0])) / a;
+void getPerspectiveTransform(SDL_Point src[4], SDL_Point dst[4], double M[9])
+{
+    // Construct the coefficient matrix A and the constant vector b
+    double A[8][8] = {0};
+    double b[8] = {0};
+
+    for (int i = 0; i < 4; i++) {
+        int j = (i + 1) % 4;
+
+        A[2*i][0] = src[i].x;
+        A[2*i][1] = src[i].y;
+        A[2*i][2] = 1;
+        A[2*i][6] = -src[i].x * dst[i].x;
+        A[2*i][7] = -src[i].y * dst[i].x;
+
+        A[2*i+1][3] = src[i].x;
+        A[2*i+1][4] = src[i].y;
+        A[2*i+1][5] = 1;
+        A[2*i+1][6] = -src[i].x * dst[i].y;
+        A[2*i+1][7] = -src[i].y * dst[i].y;
+
+        b[2*i] = dst[i].x;
+        b[2*i+1] = dst[i].y;
+    }
+
+    // Solve the linear system of equations
+    double x[8];
+    solveLinearSystem(A, b, &x, 8);
+
+    // Construct the perspective transform matrix M
+    M[0] = x[0];
+    M[1] = x[1];
+    M[2] = x[2];
+    M[3] = x[3];
+    M[4] = x[4];
+    M[5] = x[5];
+    M[6] = x[6];
+    M[7] = x[7];
+    M[8] = 1;
+}
+
+
+static void
+perspective(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, SDL_Point* points)
+{
+    double M[9];
+    SDL_Point srcpoint[4] = { {0, 0}, {src->w, 0}, {src->w, src->h}, {0, src->h} };
+
+    getPerspectiveTransform(srcpoint, points, M);
 
     Uint32* src_pixels = (Uint32*) src->pixels;
-    Uint32* dest_pixels = (Uint32*) dst->pixels;
+    Uint32* dst_pixels = (Uint32*) dst->pixels;
+    printf("%d",dst->h);
+    printf("%d",dst->w);
 
-    for (int y = 0; y < src->h; y++) {
-        for (int x = 0; x < src->w; x++) {
-            double u = (b * x + c * y + d) / (a * x + b * y + 1);
-            double v = (e * x + f * y + 1) / (a * x + b * y + 1);
-            int u_int = (int) (u * src->w);
-            int v_int = (int) (v * src->h);
+    for (int y = 0; y < dst->h; y++) {
+        for (int x = 0; x < dst->w; x++) {
+            // Calculate the corresponding pixel location in the SDL surface
+            double src_x = M[0]*x + M[1]*y + M[2];
+            double src_y = M[3]*x + M[4]*y + M[5];
+            double w = M[6]*x + M[7]*y + M[8];
 
-            if (u_int >= 0 && u_int < src->w && v_int >= 0 && v_int < src->h) {
-                dest_pixels[y * src->w + x] = src_pixels[v_int * src->w + u_int];
+            // Normalize the coordinates
+            src_x /= w;
+            src_y /= w;
+
+
+            // Copy the color of the corresponding pixel in the SDL surface to the destination surface
+            if (src_x >= 0 && src_x < src->w && src_y >= 0 && src_y < src->h) {
+                int src_index = (int)src_y * src->pitch  + (int) src_x * src->format->BytesPerPixel;
+                printf("%d\n", src_x);
+                dst_pixels[y * dst->pitch + x] = src_pixels[src_index];
+                printf("here");
             }
         }
     }
+
+    printf("wow");
 }
 
 static SDL_Surface *
@@ -721,14 +808,15 @@ surf_perspective(PyObject *self, PyObject *args, PyObject *kwargs)
     pgSurfaceObject *surfobj;
     SDL_Surface *surf, *newsurf;
 
-    int x1, x2, y1, y2;
+    int x1, y1, x2, y2, x3, y3, x4, y4;
     double x, y, cx, cy, sx, sy;
+    int start, width, top, height;
     int nxmax, nymax;
     Uint32 bgcolor;
-    static char *keywords[] = {"surface", "angle", NULL};
+    static char *keywords[] = {"surface", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!f", keywords,
-                                     &pgSurface_Type, &surfobj, &x1, &x2, &y1, &y2))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!iiiiiiii", keywords,
+                                     &pgSurface_Type, &surfobj, &x1, &y1, &x2, &y2, &x3, &y3, &x4, &y4))
         return NULL;
     surf = pgSurface_AsSurface(surfobj);
     SURF_INIT_CHECK(surf)
@@ -741,7 +829,14 @@ surf_perspective(PyObject *self, PyObject *args, PyObject *kwargs)
     if (surf->format->BytesPerPixel == 0 || surf->format->BytesPerPixel > 4)
         return RAISE(PyExc_ValueError,
                      "unsupported Surface bit depth for transform");
-
+    start = MIN(MIN(x1, x2), MIN(x3, x4));
+    width = MAX(MAX(x1, x2), MAX(x3, x4)) - start;
+    top = MIN(MIN(y1, y2), MIN(y3, y4));
+    height = MAX(MAX(y1, y2), MAX(y3, y4)) - top;
+    printf("we made it");
+    newsurf = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32, surf->format->format);
+    printf("%d\n", newsurf->w);
+    printf("%d\n", surf->w);
 
     if (!newsurf)
         return NULL;
@@ -776,11 +871,13 @@ surf_perspective(PyObject *self, PyObject *args, PyObject *kwargs)
 
     SDL_LockSurface(newsurf);
     pgSurface_Lock(surfobj);
-
+    SDL_Point points[4] = {{x1, y1}, {x2, y2}, {x3, y3}, {x4, y4}};
     Py_BEGIN_ALLOW_THREADS;
-    rotate(surf, newsurf, bgcolor, sangle, cangle);
-    Py_END_ALLOW_THREADS;
+    printf("helop\n");
 
+    perspective(surf, newsurf, bgcolor, &points);
+    Py_END_ALLOW_THREADS;
+    printf(newsurf->pixels);
     pgSurface_Unlock(surfobj);
     SDL_UnlockSurface(newsurf);
 
@@ -3430,6 +3527,8 @@ static PyMethodDef _transform_methods[] = {
      DOC_TRANSFORM_SCALEBY},
     {"rotate", (PyCFunction)surf_rotate, METH_VARARGS | METH_KEYWORDS,
      DOC_TRANSFORM_ROTATE},
+    {"perspective", (PyCFunction)surf_perspective, METH_VARARGS | METH_KEYWORDS,
+     DOC_TRANSFORM_PERSPECTIVE},
     {"flip", (PyCFunction)surf_flip, METH_VARARGS | METH_KEYWORDS,
      DOC_TRANSFORM_FLIP},
     {"rotozoom", (PyCFunction)surf_rotozoom, METH_VARARGS | METH_KEYWORDS,
