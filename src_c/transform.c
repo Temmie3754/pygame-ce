@@ -447,11 +447,11 @@ void solveLinearSystem(double A[][8], double b[], double x[], int n)
     }
 }
 
-void getPerspectiveTransform(SDL_Point src[4], SDL_Point dst[4], double M[9])
+void getPerspectiveTransform(SDL_Point src[4], SDL_Point dst[4])
 {
     // Construct the coefficient matrix A and the constant vector b
-    double A[8][8] = {0};
-    double b[8] = {0};
+    double A[3][3] = {0};
+
 
     for (int i = 0; i < 4; i++) {
         int j = (i + 1) % 4;
@@ -497,6 +497,72 @@ perspective(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, SDL_Point* point
 
     getPerspectiveTransform(srcpoint, points, M);
 
+    Uint32* src_pixels = (Uint32*) src->pixels;
+    Uint32* dst_pixels = (Uint32*) dst->pixels;
+    printf("%d",dst->h);
+    printf("%d",dst->w);
+
+    for (int y = 0; y < dst->h; y++) {
+        for (int x = 0; x < dst->w; x++) {
+            // Calculate the corresponding pixel location in the SDL surface
+            double src_x = M[0]*x + M[1]*y + M[2];
+            double src_y = M[3]*x + M[4]*y + M[5];
+            double w = M[6]*x + M[7]*y + M[8];
+
+            // Normalize the coordinates
+            src_x /= w;
+            src_y /= w;
+
+
+            // Copy the color of the corresponding pixel in the SDL surface to the destination surface
+            if (src_x >= 0 && src_x < src->w && src_y >= 0 && src_y < src->h) {
+                int src_index = (int)src_y * src->pitch  + (int) src_x * src->format->BytesPerPixel;
+                printf("%d\n", src_x);
+                dst_pixels[y * dst->pitch + x] = src_pixels[src_index];
+                printf("here");
+            }
+        }
+    }
+
+    printf("wow");
+}
+
+static void
+skew(SDL_Surface *src, SDL_Surface *dst, Uint32 bgcolor, SDL_Point* points)
+{
+    // Necessitates at least two parallel sides
+
+    SDL_Point srcpoint[4] = { {0, 0}, {src->w, 0}, {0, src->h}, {src->w, src->h} };
+
+    // sort points to top left, top right, bot left, bot right
+    // Assume sorted due to
+    // bias to toppest
+
+    //check all points are in dest surface & parallel requirement
+    // quicker axis aligned skew option
+
+    dx1 = dst[1].X - dst[0].X
+    dx2 = dst[3].X - dst[2].X
+
+    dy1 = dst[1].Y - dst[0].X
+    dy2 = dst[3].Y - dst[2].Y
+
+    leftx = dst[1].X - dst[0].X
+    rightx = dst[3].X - dst[2].X
+
+    topy = dst[1].Y - dst[0].Y
+    bottomy = dst[3].Y - dst[2].Y
+
+
+
+    if (leftx != rightx && topy != bottomy) {
+        // not aligned, raise error
+        return;
+    }
+
+    if (leftx == 0 ) {
+            // quicker version
+    }
     Uint32* src_pixels = (Uint32*) src->pixels;
     Uint32* dst_pixels = (Uint32*) dst->pixels;
     printf("%d",dst->h);
